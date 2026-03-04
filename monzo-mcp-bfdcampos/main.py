@@ -2,15 +2,27 @@ from mcp.server.fastmcp import FastMCP
 import requests
 from dotenv import load_dotenv
 import os
+import sys
 import uuid
 import datetime
+from pathlib import Path
 
-load_dotenv()
+# Load .env from the directory containing this script (so it works when CWD is not the project)
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 mcp = FastMCP("Monzo")
 
 access_token = os.getenv("MONZO_ACCESS_TOKEN")
 user_id = os.getenv("MONZO_USER_ID")
+
+if not access_token:
+    raise RuntimeError(
+        "MONZO_ACCESS_TOKEN is not set. Add it to a .env file in this script's directory "
+        "or set the environment variable. See README for setup."
+    )
+
+# Stderr so we don't break stdio JSON-RPC; lets you know the server started when run in a terminal
+print("Monzo MCP server ready (waiting for client on stdin). Ctrl+C to stop.", file=sys.stderr)
 
 last_hour = (datetime.datetime.utcnow() - datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -83,11 +95,10 @@ def get_balance(account_type: str = "personal", total_balance: bool = False) -> 
     }
 
     response = requests.get(balance_url, headers=headers, params=params)
+    response_data = response.json() if response.content else {}
 
     if response.status_code != 200:
-        raise Exception(f"Error: {response_data.get('error', 'Unknown error')}")
-
-    response_data = response.json()
+        raise Exception(response_data.get("error", response.text or "Unknown error"))
 
     if total_balance:
         return response_data

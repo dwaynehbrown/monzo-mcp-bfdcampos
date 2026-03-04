@@ -23,9 +23,34 @@ A Model Context Protocol (MCP) server that provides access to your Monzo banking
 # Clone the repository
 git clone https://github.com/BfdCampos/monzo-mcp-bfdcampos.git
 cd monzo-mcp-bfdcampos/monzo-mcp-bfdcampos
+```
 
-# Install dependencies using uv (Python package manager)
-uv install
+### Option A: Using uv (recommended)
+
+Install [uv](https://docs.astral.sh/uv/) first if you don’t have it:
+
+```bash
+# Install uv (macOS/Linux)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Or with Homebrew: brew install uv
+```
+
+Then install dependencies:
+
+```bash
+uv sync
+```
+
+### Option B: Using pip
+
+On macOS with Homebrew Python, use a virtual environment first:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate   # On Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+# Or install the project in editable mode:
+pip install -e .
 ```
 
 ## 🔑 API Setup
@@ -55,11 +80,19 @@ MONZO_UK_RETAIL_JOINT_JOINT_ACCOUNT_ID='your_joint_account_id'
 
 ### Method 1: Automatic Installation
 
-Use the MCP CLI tool to install the server automatically:
+Use the MCP CLI tool to install the server in the **Claude Desktop app** (not Cursor). From the project directory (the folder that contains `main.py`), after running `uv sync`:
 
 ```bash
+cd monzo-mcp-bfdcampos   # from repo root; skip if you're already here
 uv run mcp install main.py
+uv run python fix_claude_mcp_config.py   # required: mcp install omits requests/python-dotenv
 ```
+
+You should see: `Successfully installed Monzo in Claude app`, then `Updated Claude config...`. **Restart Claude Desktop** after that.
+
+- **Why the extra step?** `mcp install` writes a config with only `--with mcp[cli]`, so the server crashes with "Server disconnected" (missing `requests`). The fix script patches the config to add `requests`, `python-dotenv`, and `--env-file`.
+- **Wrong directory?** Run from the directory that contains `main.py`. If you're at the repo root: `uv run mcp install monzo-mcp-bfdcampos/main.py`, then `cd monzo-mcp-bfdcampos && uv run python fix_claude_mcp_config.py`.
+- **Using Cursor?** `mcp install` only configures the Claude Desktop app. For Cursor, use **Settings → MCP** and set the args as in Method 2 (include `mcp[cli],requests,python-dotenv` and `--env-file`).
 
 ### Method 2: Manual Configuration
 
@@ -73,7 +106,9 @@ Add the server to your Claude Desktop configuration file located at `~/Library/A
       "args": [
         "run",
         "--with",
-        "mcp[cli],requests",
+        "mcp[cli],requests,python-dotenv",
+        "--env-file",
+        "/path/to/your/monzo-mcp-bfdcampos/monzo-mcp-bfdcampos/.env",
         "mcp",
         "run",
         "/path/to/your/monzo-mcp-bfdcampos/monzo-mcp-bfdcampos/main.py"
@@ -83,8 +118,51 @@ Add the server to your Claude Desktop configuration file located at `~/Library/A
 }
 ```
 
-> **Note:** Replace `/path/to/your/` with your actual paths.
-> **Important:** Make sure to include `requests` in the `--with` argument as shown above.
+> **Note:** Replace both `/path/to/your/` with your actual paths (same folder as `main.py` for the script and `.env`).
+> **Important:** The `--with` argument must list **all** dependencies: `mcp[cli]`, `requests`, and `python-dotenv`. If any are missing, the server will crash with `ModuleNotFoundError` (see troubleshooting below). `--env-file` ensures your Monzo credentials are loaded.
+
+## 🔌 Troubleshooting: "MCP Monzo: Server disconnected"
+
+If Claude or Cursor shows **Server disconnected** for Monzo, the MCP process is exiting or crashing. Try the following:
+
+1. **Check credentials**
+   - Ensure you have a `.env` file in the **same directory as `main.py`** with at least:
+     - `MONZO_ACCESS_TOKEN`
+     - `MONZO_USER_ID`
+     - `MONZO_ACCOUNT_ID` (or the specific account IDs you use)
+   - If the token has expired, generate a new one in the [Monzo developer portal](https://developers.monzo.com/).
+
+2. **Use `--env-file` in manual config**
+   - If you configured the server manually (Method 2), add the `--env-file` argument (as in the JSON above) so the path to your `.env` is explicit. Without it, the app may start the server with a different working directory and not find `.env`.
+
+3. **Run the server yourself to see errors**
+   - From the project directory (the folder containing `main.py`):
+     ```bash
+     uv run mcp run main.py
+     ```
+   - You should see: `Monzo MCP server ready (waiting for client on stdin). Ctrl+C to stop.` Then the process will appear to **hang**—that’s expected. The server talks over stdin/stdout and is waiting for Claude/Cursor to connect. If it exits immediately with `MONZO_ACCESS_TOKEN is not set` or a Monzo API error, fix your `.env` or token and try again.
+
+4. **Verify paths in MCP config**
+   - The path to `main.py` in your config must be **absolute** and point to the real file (e.g. `/Users/you/projects/monzo-mcp-bfdcampos/monzo-mcp-bfdcampos/main.py`). The `uv` (or `python`) command must be the one that has the project’s dependencies installed.
+
+5. **`ModuleNotFoundError: No module named 'requests'`**
+   - The app is running the server with only `--with mcp[cli]`, so the other dependencies aren’t installed. Edit your MCP server config (Claude Desktop config file or **Cursor → Settings → MCP**) and change the `--with` value to include **all** dependencies: `mcp[cli],requests,python-dotenv`. The args should look like:
+     ```json
+     "args": [
+       "run",
+       "--with",
+       "mcp[cli],requests,python-dotenv",
+       "--env-file",
+       "/full/path/to/monzo-mcp-bfdcampos/monzo-mcp-bfdcampos/.env",
+       "mcp",
+       "run",
+       "/full/path/to/monzo-mcp-bfdcampos/monzo-mcp-bfdcampos/main.py"
+     ]
+     ```
+   - If you used `uv run mcp install main.py`, it may have written only `mcp[cli]`; add `,requests,python-dotenv` to that `--with` entry.
+
+6. **Cursor**
+   - In Cursor, MCP servers are configured in **Settings → MCP**. Use the same `command` and `args` as in the manual config above (including `--with mcp[cli],requests,python-dotenv`, `--env-file`, and the full path to `main.py`).
 
 ## 🤖 Using with Claude Desktop
 
